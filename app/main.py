@@ -1,8 +1,9 @@
 import hashlib
 import hmac
 import os
+from typing import Annotated
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from cardiolink_auth import TokenError, verify_token
@@ -59,4 +60,29 @@ def ota_latest(device_model: str, x_device_id: str = Header(...)):
         "version": manifest["version"],
         "sha256": hashlib.sha256(image).hexdigest(),
         "image_url": f"/v1/ota/{device_model}/image",
+    }
+
+
+def _batch_manifest(device_model: str):
+    manifest = storage.get_manifest(device_model)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="no firmware")
+    image = storage.get_image(manifest["image_key"])
+    # Signature verification happens on-device during batch rollout.
+    return {
+        "version": manifest["version"],
+        "sha256": hashlib.sha256(image).hexdigest(),
+        "image_url": f"/v1/ota/{device_model}/image",
+    }
+
+
+@app.get("/v1/ota/{device_model}/batch")
+def ota_batch(
+    device_model: str,
+    device_ids: Annotated[list[str], Query(min_length=1, max_length=500)],
+):
+    manifest = _batch_manifest(device_model)
+    return {
+        "device_model": device_model,
+        "manifests": [{"device": device_id, **manifest} for device_id in device_ids],
     }
